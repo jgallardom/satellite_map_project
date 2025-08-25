@@ -1,9 +1,7 @@
 services:
-  - type: web
+  - type: static
     name: satellite-map-v4
-    env: static
     buildCommand: null
-    startCommand: null
     staticPublishPath: ./templates
     routes:
       - type: rewrite
