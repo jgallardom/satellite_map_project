@@ -2,8 +2,4 @@ services:
   - type: static
     name: satellite-map-v4
     buildCommand: null
-    staticPublishPath: ./templates
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /satellite_map_v4.html 
+    staticPublishPath: ./templates 
