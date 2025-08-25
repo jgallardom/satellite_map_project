@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 100vw; }
+        .controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: rgba(255,255,255,0.9);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        .controls input, .controls select {
+            margin: 2px;
+            width: 80px;
+            font-size: 11px;
+        }
+        .coordinates {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="controls">
+        <strong>POINTS:</strong><br>
+        <textarea id="pointsInput" placeholder="Enter coordinates, one per line:&#10;8.825,-82.543&#10;8.750,-82.600" rows="4" style="width: 200px; font-size: 11px;"></textarea><br>
+        <button onclick="updateGrid()">Update</button>
+        
+        <div id="pointLabels" style="margin-top: 10px; font-size: 12px; font-family: monospace;"></div>
+    </div>
+    
+    <div class="coordinates" id="coordinates">Lat: 0.000, Lon: 0.000</div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let map;
+        let labelLayer;
+        let gridLineLayer;
+        let pointsLayer;
+        let buttonLayer;
+        let config = {
+            label: {
+                southLat: 8.62,
+                eastLon: -82.00,
+                step: 0.01,
+                deltaLat: 0.005,
+                deltaLon: -0.005,
+                letters: '23456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_'
+            },
+            grid: {
+                southLat: 8.6,
+                eastLon: -82,
+                step: 0.01
+            }
+        };
+
+        function initMap() {
+            map = L.map('map').setView([8.85, -82.65], 11);
+            
+            // Base layers
+            const roadMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap'
+            });
+            
+            const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: '© Esri'
+            });
+            
+            const topo = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+                attribution: '© Esri'
+            });
+            
+            roadMap.addTo(map);
+            
+            const baseLayers = {
+                "Road": roadMap,
+                "Satellite": satellite,
+                "Topo": topo
+            };
+            
+            L.control.layers(baseLayers).addTo(map);
+            
+            // Mouse tracking
+            map.on('mousemove', function(e) {
+                const lat = Math.floor(e.latlng.lat * 10000) / 10000;
+                const lon = Math.ceil(e.latlng.lng * 10000) / 10000;
+                document.getElementById('coordinates').textContent = `Lat: ${lat}, Lon: ${lon}`;
+            });
+            
+            // Click to show truncated coordinates and label
+            map.on('click', function(e) {
+                const lat = Math.round(e.latlng.lat*10000)/10000;
+                const lon = Math.round(e.latlng.lng*10000)/10000;
+                console.log("lat",e.latlng.lat, "lon", e.latlng.lng, "lat", lat, "lon", lon);
+                // Truncate to 2 decimals for label calculation
+                const truncLat = Math.floor(lat * 100) / 100;
+                const truncLon = Math.ceil(lon * 100) / 100;
+                
+                // Generate label for truncated coordinates
+                const label = generateLabel(truncLat, truncLon);
+                const label882 = generateLabel882(truncLat, truncLon);
+                const label882seq = generateLabel882seq(truncLat, truncLon);
+                const truncSouthLat = config.label.southLat;
+                const index = Math.round((truncLat - truncSouthLat) / config.label.step,0);
+                const stringTruncLat = truncLat.toString().padEnd(4, '0');
+                const stringTruncLon = truncLon.toString().padEnd(6, '0');
+                L.popup()
+                    .setLatLng(e.latlng)
+                    .setContent(`
+                                                 Coordenadas: ${lat.toFixed(4)}, ${lon.toFixed(4)}<br>
+                         Truncated (2 dec): <span style="color: black;"><strong>${stringTruncLat[0]}</strong></span><span style="color: black;"><strong>${stringTruncLat[1]}</strong></span><span style="color: red;"><strong>${stringTruncLat[2]}</strong></span><span style="color: brown;"><strong>${stringTruncLat[3]}</strong></span> , <span style="color: black;"><strong>${stringTruncLon[0]}</strong></span><span style="color: black;"><strong>${stringTruncLon[1]}</strong></span><span style="color: black;"><strong>${stringTruncLon[2]}</strong></span><span style="color: black;"><strong>${stringTruncLon[3]}</strong></span><span style="color: green;"><strong>${stringTruncLon[4]}</strong></span><span style="color: blue;"><strong>${stringTruncLon[5]}</strong></span><br>
+                        <br>
+                        LabelAlfai: <strong>${label[0]}</strong>
+                        <span style="color: green;"><strong>${label882[2]}</strong></span><span style="color: blue;"><strong>${label882[3]}</strong></span><br>
+                        Utiliza un caracter para la latitud (A:8.7N B:8.71N C:8.72N...) y los primeros 2 decimales de la longitud 
+                        <br>
+                        <br>
+                        Label882: <span style="color: red;"><strong>${label882[0]}</strong></span><span style="color: brown;"><strong>${label882[1]}</strong></span>
+                        <span style="color: green;"><strong>${label882[2]}</strong></span><span style="color: blue;"><strong>${label882[3]}</strong></span><br>
+                        utiliza los primeros 2 decimales de la latitud y longitud, generando un codigo de 4 digitos.
+                        <br>
+                        <br>
+                        Label882seq: <span style="color: red;"><strong>${label882seq[0]}</strong></span><span style="color: green;"><strong>${label882seq[1]}</strong></span>
+                        <span style="color: brown;"><strong>${label882seq[2]}</strong></span><span style="color: blue;"><strong>${label882seq[3]}</strong></span><br>
+                        utiliza el primer decimal de la latitud y longitud, y luego los segundos decimales, generando un codigo de 4 digitos.
+                    `)
+                    .openOn(map);
+            });
+            
+            updateGrid();
+        }
+
+        function updateGrid() {
+            // Use hardcoded default values (no inputs to read)
+            
+            // Remove existing labels, grid lines, points, and buttons
+            if (labelLayer && map.hasLayer(labelLayer)) {
+                map.removeLayer(labelLayer);
+            }
+            if (gridLineLayer && map.hasLayer(gridLineLayer)) {
+                map.removeLayer(gridLineLayer);
+            }
+            if (pointsLayer && map.hasLayer(pointsLayer)) {
+                map.removeLayer(pointsLayer);
+            }
+            if (buttonLayer && map.hasLayer(buttonLayer)) {
+                map.removeLayer(buttonLayer);
+            }
+            
+            // Create new labels
+            labelLayer = L.layerGroup();
+            
+            // Calculate label bounds
+            const eastDecimal = Math.floor((Math.abs(config.label.eastLon) % 1) * 100);
+            const westExtent = (99 - eastDecimal) * 0.01;
+            
+            const labelBounds = {
+                south: config.label.southLat,
+                north: config.label.southLat + (config.label.step * config.label.letters.length),
+                east: config.label.eastLon,
+                west: config.label.eastLon - westExtent
+            };
+            
+            // Calculate grid bounds to cover full extent
+            const gridEastDecimal = Math.floor((Math.abs(config.grid.eastLon) % 1) * 100);
+            const gridWestExtent = (99 - gridEastDecimal) * 0.01; // Go all the way to .99
+            
+            const gridBounds = {
+                south: config.grid.southLat,
+                north: config.grid.southLat + (config.grid.step * config.label.letters.length), // Cover all letters
+                west: config.grid.eastLon - gridWestExtent, // Go to .99
+                east: config.grid.eastLon
+            };
+            
+            // Create labels only around the map edges
+            const labelStepInt = Math.round(config.label.step * 1000);
+            const labelSouthInt = Math.round(labelBounds.south * 1000);
+            const labelNorthInt = Math.round(labelBounds.north * 1000);
+            const labelWestInt = Math.round(labelBounds.west * 1000);
+            const labelEastInt = Math.round(labelBounds.east * 1000);
+            
+            // Vertical labels (latitude-based) on left and right sides - show only the letter
+            for (let latInt = labelSouthInt; latInt <= labelNorthInt; latInt += labelStepInt) {
+                const lat = latInt / 1000;
+                const fullLabel = generateLabel(lat, labelBounds.west);
+                const letterOnly = fullLabel.charAt(0); // Extract only the first character (letter)
+                
+                // Left side labels
+                const leftLabel = L.divIcon({
+                    html: `<div style="background: white; border: 1px solid #333; padding: 2px 4px; font-size: 10px; white-space: nowrap;">${letterOnly}</div>`,
+                    className: 'label-icon',
+                    iconSize: [20, 20],
+                    iconAnchor: [25, 10]
+                });
+                const leftMarker = L.marker([lat+0.005, labelBounds.west - 0.005], { icon: leftLabel });
+                labelLayer.addLayer(leftMarker);
+                
+                // Right side labels
+                const rightLabel = L.divIcon({
+                    html: `<div style="background: white; border: 1px solid #333; padding: 2px 4px; font-size: 10px; white-space: nowrap;">${letterOnly}</div>`,
+                    className: 'label-icon',
+                    iconSize: [20, 20],
+                    iconAnchor: [25, 10]
+                });
+                const rightMarker = L.marker([lat+0.005, labelBounds.east + 0.005], { icon: rightLabel });
+                labelLayer.addLayer(rightMarker);
+            }
+            
+            // Horizontal labels (longitude-based) on top and bottom - show only the two decimal digits
+            for (let lonInt = labelWestInt; lonInt <= labelEastInt; lonInt += labelStepInt) {
+                const lon = lonInt / 1000;
+                const fullLabel = generateLabel(labelBounds.south, lon);
+                const digitsOnly = fullLabel.substring(1); // Extract only the digits (skip first character)
+                
+                // Bottom labels
+                const bottomLabel = L.divIcon({
+                    html: `<div style="background: white; border: 1px solid #333; padding: 2px 4px; font-size: 10px; white-space: nowrap;">${digitsOnly}</div>`,
+                    className: 'label-icon',
+                    iconSize: [20, 20],
+                    iconAnchor: [25, 10]
+                });
+                const bottomMarker = L.marker([labelBounds.south - 0.005, lon-0.005], { icon: bottomLabel });
+                labelLayer.addLayer(bottomMarker);
+                
+                // Top labels
+                const topLabel = L.divIcon({
+                    html: `<div style="background: white; border: 1px solid #333; padding: 2px 4px; font-size: 10px; white-space: nowrap;">${digitsOnly}</div>`,
+                    className: 'label-icon',
+                    iconSize: [20, 20],
+                    iconAnchor: [25, 10]
+                });
+                const topMarker = L.marker([labelBounds.north + 0.0025   , lon-0.003], { icon: topLabel });
+                labelLayer.addLayer(topMarker);
+            }
+            
+            labelLayer.addTo(map);
+            
+                        // Create button markers every 0.5 degrees
+            buttonLayer = L.layerGroup();
+            
+            // Button markers every 0.5 degrees latitude (vertical)
+            console.log('Latitude button range:', Math.ceil(config.label.southLat * 2) / 2, 'to', config.label.southLat + (config.label.letters.length * config.label.step));
+            for (let lat = Math.ceil(config.label.southLat * 2) / 2; lat <= config.label.southLat + (config.label.letters.length * config.label.step); lat += 0.5) {
+                console.log('Creating latitude button at:', lat);
+                // Left side button markers
+                const leftButton = L.circleMarker([lat, labelBounds.west - 0.01], {
+                    radius: 8,
+                    fillColor: '#0066ff',
+                    color: '#0033cc',
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                });
+                leftButton.bindPopup(`<strong>Latitude Button</strong><br>Lat: ${lat.toFixed(3)}°N<br>Lon: ${(labelBounds.west - 0.01).toFixed(3)}°W`);
+                buttonLayer.addLayer(leftButton);
+                
+                // Right side button markers
+                const rightButton = L.circleMarker([lat, labelBounds.east + 0.01], {
+                    radius: 8,
+                    fillColor: '#0066ff',
+                    color: '#0033cc',
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                });
+                rightButton.bindPopup(`<strong>Latitude Button</strong><br>Lat: ${lat.toFixed(3)}°N<br>Lon: ${(labelBounds.east + 0.01).toFixed(3)}°W`);
+                buttonLayer.addLayer(rightButton);
+            }
+            
+            // Button markers every 0.5 degrees longitude (horizontal)
+            console.log('Longitude button range:', Math.ceil(labelBounds.west * 2) / 2, 'to', labelBounds.east + 0.5);
+            for (let lon = Math.ceil(labelBounds.west * 2) / 2; lon <= labelBounds.east + 0.5; lon += 0.5) {
+                console.log('Creating longitude button at:', lon);
+                // Bottom button markers
+                const bottomButton = L.circleMarker([labelBounds.south - 0.01, lon], {
+                    radius: 8,
+                    fillColor: '#ff6600',
+                    color: '#cc3300',
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                });
+                bottomButton.bindPopup(`<strong>Longitude Button</strong><br>Lat: ${(labelBounds.south - 0.01).toFixed(3)}°N<br>Lon: ${lon.toFixed(3)}°W`);
+                buttonLayer.addLayer(bottomButton);
+                
+                // Top button markers
+                const topButton = L.circleMarker([labelBounds.north + 0.01, lon], {
+                    radius: 8,
+                    fillColor: '#ff6600',
+                    color: '#cc3300',
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                });
+                topButton.bindPopup(`<strong>Longitude Button</strong><br>Lat: ${(labelBounds.north + 0.01).toFixed(3)}°N<br>Lon: ${lon.toFixed(3)}°W`);
+                buttonLayer.addLayer(topButton);
+            }
+            
+            buttonLayer.addTo(map);
+            
+            // Create grid lines using grid config
+            gridLineLayer = L.layerGroup();
+            
+            const gridStepInt = config.grid.step;
+            const gridSouthInt = gridBounds.south;
+            const gridNorthInt = gridBounds.north;
+            const gridWestInt = gridBounds.west;
+            const gridEastInt = gridBounds.east;
+            
+            // Vertical lines (longitude lines)
+            for (let lonInt = gridWestInt; lonInt <= gridEastInt; lonInt += gridStepInt) {
+                const lon = lonInt;
+                const linePoints = [];
+                for (let latInt = gridSouthInt; latInt <= gridNorthInt; latInt += gridStepInt/10) {
+                    linePoints.push([latInt, lon]);
+                }
+                const line = L.polyline(linePoints, {
+                    color: '#ff0000',
+                    weight: 2,
+                    opacity: 0.8
+                });
+                gridLineLayer.addLayer(line);
+            }
+            
+            // Horizontal lines (latitude lines)
+            for (let latInt = gridSouthInt; latInt <= gridNorthInt; latInt += gridStepInt) {
+                const lat = latInt;
+                const linePoints = [];
+                for (let lonInt = gridWestInt; lonInt <= gridEastInt; lonInt += gridStepInt/10) {
+                    linePoints.push([lat, lonInt]);
+                }
+                const line = L.polyline(linePoints, {
+                    color: '#ff0000',
+                    weight: 2,
+                    opacity: 0.8
+                });
+                gridLineLayer.addLayer(line);
+            }
+            
+            gridLineLayer.addTo(map);
+            
+            // Create points from input and calculate labels
+            pointsLayer = L.layerGroup();
+            const pointsText = document.getElementById('pointsInput').value.trim();
+            let labelsList = [];
+            
+            if (pointsText) {
+                const lines = pointsText.split('\n');
+                
+                lines.forEach(line => {
+                    const trimmedLine = line.trim();
+                    if (trimmedLine) {
+                        const parts = trimmedLine.split(',');
+                        if (parts.length >= 2) {
+                            const lat = parseFloat(parts[0].trim());
+                            const lon = parseFloat(parts[1].trim());
+                            
+                            if (!isNaN(lat) && !isNaN(lon)) {
+                                const point = L.circleMarker([lat, lon], {
+                                    radius: 5,
+                                    fillColor: '#00ff00',
+                                    color: '#008000',
+                                    weight: 2,
+                                    opacity: 1,
+                                    fillOpacity: 0.8
+                                });
+                                
+                                // Calculate truncated coordinates and grid code
+                                const truncLat = Math.floor(lat * 100) / 100;
+                                const truncLon = Math.ceil(lon * 100) / 100;
+                                const gridCode = generateLabel(lat, lon);
+                                
+                                // Add to labels list for display
+                                labelsList.push(`${truncLat}, ${truncLon} → ${gridCode}`);
+                                
+                                point.bindPopup(`
+                                    <strong>Point</strong><br>
+                                    Lat: ${truncLat}<br>
+                                    Lon: ${truncLon}<br>
+                                    Grid: ${gridCode}
+                                `);
+                                
+                                pointsLayer.addLayer(point);
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Display calculated labels
+            const labelsDiv = document.getElementById('pointLabels');
+            if (labelsList.length > 0) {
+                labelsDiv.innerHTML = '<strong>CALCULATED LABELS:</strong><br>' + labelsList.join('<br>');
+            } else {
+                labelsDiv.innerHTML = '';
+            }
+            
+            pointsLayer.addTo(map);
+        }
+        function generateLabel882(lat, lon) {
+            const truncLat = lat;
+            const truncLon = lon;
+            const truncSouthLat = config.label.southLat;
+            const truncEastLon = config.label.eastLon;
+            
+            const enteroLon =  Math.floor(Math.abs(truncLon))*100;
+            const truncLonDecimals = Math.floor(Math.abs(truncLon) * 100)-enteroLon 
+            console.log("truncLon", truncLon, "entero", enteroLon, "truncLonDecimals", truncLonDecimals);
+            const decimalslonStr = truncLonDecimals.toString().padStart(2, '0');
+            
+            
+            const enteroLat =  Math.floor(Math.abs(truncLat))*100;
+            const truncLatDecimals = Math.floor(Math.abs(truncLat) * 100)-enteroLat 
+            console.log("truncLat", truncLat, "entero", enteroLat, "truncLatDecimals", truncLatDecimals);
+            const decimalslatStr = truncLatDecimals.toString().padStart(2, '0');
+
+            return decimalslatStr + decimalslonStr;
+        }
+        function generateLabel882seq(lat, lon) {
+            const truncLat = lat;
+            const truncLon = lon;
+            const truncSouthLat = config.label.southLat;
+            const truncEastLon = config.label.eastLon;
+        
+                
+            const enteroLon =  Math.floor(Math.abs(truncLon))*100;
+            const truncLonDecimals = Math.floor(Math.abs(truncLon) * 100)-enteroLon 
+            console.log("truncLon", truncLon, "entero", enteroLon, "truncLonDecimals", truncLonDecimals);
+            const decimalslonStr = truncLonDecimals.toString().padStart(2, '0');
+            
+            
+            const enteroLat =  Math.floor(Math.abs(truncLat))*100;
+            const truncLatDecimals = Math.floor(Math.abs(truncLat) * 100)-enteroLat 
+            console.log("truncLat", truncLat, "entero", enteroLat, "truncLatDecimals", truncLatDecimals);
+            const decimalslatStr = truncLatDecimals.toString().padStart(2, '0');
+
+            return decimalslatStr[0] + decimalslonStr[0] + decimalslatStr[1] + decimalslonStr[1];
+        
+        
+        }
+        function generateLabel(lat, lon) {
+            // Truncate coordinates for label decisions
+            const truncLat = lat;
+            const truncLon = lon;
+            const truncSouthLat = config.label.southLat;
+            const truncStep = config.label.step;
+            
+            // Get letter based on latitude position
+            const latIndex = Math.round((truncLat - truncSouthLat) / truncStep,0);
+            console.log(truncLat, truncSouthLat, truncStep, latIndex);
+            const safeIndex = Math.max(0, Math.min(latIndex, config.label.letters.length - 1));
+            const letter = config.label.letters[safeIndex] || 'A';
+            
+            // Debug logging
+            console.log(`lat=${truncLat}, southLat=${truncSouthLat}, step=${truncStep}, latIndex=${latIndex}, safeIndex=${safeIndex}, letter=${letter}`);
+            
+            // Get first two decimals from longitude (truncated)
+            const entero =  Math.floor(Math.abs(truncLon))*100;
+            const truncLonDecimals = Math.floor(Math.abs(truncLon) * 100)-entero 
+            console.log("truncLon", truncLon, "entero", entero, "truncLonDecimals", truncLonDecimals);
+            const decimalsStr = truncLonDecimals.toString().padStart(2, '0');
+            
+            return letter + decimalsStr;
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', initMap);
+    </script>
+</body>
+</html>
